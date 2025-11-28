@@ -72,6 +72,7 @@ export interface FullValidationRow {
 export interface ValidationResult {
     totalRows: number;
     matches: number;
+    blanks: number; // New field for missing data scenarios
     mismatches: ValidationMismatch[];
     fullReport: FullValidationRow[]; // New field for the Excel-like view
 }
