@@ -1,7 +1,7 @@
 
-import React, { useState } from 'react';
-import { Upload, FileUp, AlertTriangle, CheckCircle2, Download, Eye, X, Table as TableIcon } from 'lucide-react';
-import { ValidationResult, ValidationMismatch, FullValidationRow, ValidationDetail } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Upload, FileUp, AlertTriangle, CheckCircle2, Download, Eye, X, Table as TableIcon, History, RotateCcw, Trash2 } from 'lucide-react';
+import { ValidationResult, ValidationMismatch, FullValidationRow, ValidationDetail, ValidationHistoryItem } from '../types';
 
 const ValidationPage: React.FC = () => {
   const [fileIT, setFileIT] = useState<File | null>(null);
@@ -11,14 +11,35 @@ const ValidationPage: React.FC = () => {
   const [selectedMismatch, setSelectedMismatch] = useState<ValidationMismatch | null>(null);
   const [showFullReport, setShowFullReport] = useState(false);
   
+  // History State
+  const [history, setHistory] = useState<ValidationHistoryItem[]>([]);
+
   // Filter state for the full report modal
   const [reportFilter, setReportFilter] = useState<'ALL' | 'MATCH' | 'MISMATCH'>('ALL');
+
+  // Load history from local storage on mount
+  useEffect(() => {
+    const savedHistory = localStorage.getItem('validationHistory');
+    if (savedHistory) {
+        try {
+            setHistory(JSON.parse(savedHistory));
+        } catch (e) {
+            console.error("Failed to parse history", e);
+        }
+    }
+  }, []);
+
+  // Save history to local storage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('validationHistory', JSON.stringify(history));
+  }, [history]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'IT' | 'MASTER') => {
     if (e.target.files && e.target.files[0]) {
       if (type === 'IT') setFileIT(e.target.files[0]);
       else setFileMaster(e.target.files[0]);
-      setResult(null);
+      // Note: We don't reset result immediately to keep the view until new validation starts
+      // setResult(null); 
     }
   };
 
@@ -240,12 +261,24 @@ const ValidationPage: React.FC = () => {
             fullReport.push(reportRow);
         });
 
-        setResult({
+        const validationResult: ValidationResult = {
             totalRows: fullReport.length,
             matches: matchesCount,
             mismatches: mismatches,
             fullReport: fullReport
-        });
+        };
+
+        setResult(validationResult);
+
+        // Add to History
+        const historyItem: ValidationHistoryItem = {
+            id: Date.now().toString(),
+            timestamp: new Date().toLocaleString('id-ID'), // Format Indonesia
+            fileNameIT: fileIT.name,
+            fileNameMaster: fileMaster.name,
+            result: validationResult
+        };
+        setHistory(prev => [historyItem, ...prev]);
 
     } catch (error) {
         console.error("Validation Error:", error);
@@ -258,6 +291,20 @@ const ValidationPage: React.FC = () => {
   const handleOpenReport = (filter: 'ALL' | 'MATCH' | 'MISMATCH') => {
       setReportFilter(filter);
       setShowFullReport(true);
+  };
+
+  const restoreFromHistory = (item: ValidationHistoryItem) => {
+      setResult(item.result);
+      setFileIT(null); // Clear file inputs visually to indicate this is historical data
+      setFileMaster(null);
+      // Optional: Scroll to top to see result
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const clearHistory = () => {
+      if(window.confirm('Hapus semua riwayat validasi?')) {
+          setHistory([]);
+      }
   };
 
   const getDisplayedRows = () => {
@@ -303,7 +350,7 @@ const ValidationPage: React.FC = () => {
                 htmlFor="file-it" 
                 className="cursor-pointer px-4 py-2 border border-dashed border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 hover:border-accent transition w-full truncate mb-3"
             >
-                {fileIT ? fileIT.name : 'Click to Upload'}
+                {fileIT ? fileIT.name : (result ? 'Tidak ada file baru' : 'Click to Upload')}
             </label>
 
             <button 
@@ -335,7 +382,7 @@ const ValidationPage: React.FC = () => {
                 htmlFor="file-master" 
                 className="cursor-pointer px-4 py-2 border border-dashed border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 hover:border-accent transition w-full truncate mb-3"
             >
-                {fileMaster ? fileMaster.name : 'Click to Upload'}
+                {fileMaster ? fileMaster.name : (result ? 'Tidak ada file baru' : 'Click to Upload')}
             </label>
 
             <button 
@@ -453,6 +500,66 @@ const ValidationPage: React.FC = () => {
               )}
           </div>
       )}
+
+      {/* History Section */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+            <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                <History size={20} className="text-slate-500" />
+                Riwayat Validasi
+            </h3>
+            {history.length > 0 && (
+                <button 
+                    onClick={clearHistory}
+                    className="text-red-500 hover:text-red-700 text-sm flex items-center gap-1"
+                >
+                    <Trash2 size={16} /> Hapus Riwayat
+                </button>
+            )}
+        </div>
+        <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+                <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                    <tr>
+                        <th className="px-6 py-3">Waktu</th>
+                        <th className="px-6 py-3">File IT</th>
+                        <th className="px-6 py-3">File Master</th>
+                        <th className="px-6 py-3">Hasil</th>
+                        <th className="px-6 py-3">Aksi</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                    {history.map((item) => (
+                        <tr key={item.id} className="hover:bg-slate-50 transition">
+                            <td className="px-6 py-3 text-slate-500">{item.timestamp}</td>
+                            <td className="px-6 py-3 text-slate-800 font-medium">{item.fileNameIT}</td>
+                            <td className="px-6 py-3 text-slate-800 font-medium">{item.fileNameMaster}</td>
+                            <td className="px-6 py-3">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-800">
+                                    {item.result.matches} / {item.result.totalRows} Sesuai
+                                </span>
+                            </td>
+                            <td className="px-6 py-3">
+                                <button 
+                                    onClick={() => restoreFromHistory(item)}
+                                    className="text-accent hover:text-blue-700 flex items-center gap-1 text-xs font-medium border border-blue-100 px-2 py-1 rounded hover:bg-blue-50"
+                                >
+                                    <RotateCcw size={12} /> Lihat Kembali
+                                </button>
+                            </td>
+                        </tr>
+                    ))}
+                    {history.length === 0 && (
+                        <tr>
+                            <td colSpan={5} className="px-6 py-8 text-center text-slate-400">
+                                Belum ada riwayat validasi.
+                            </td>
+                        </tr>
+                    )}
+                </tbody>
+            </table>
+        </div>
+      </div>
 
       {/* FULL REPORT MODAL (Matches Gambar 2) */}
       {showFullReport && result && (
