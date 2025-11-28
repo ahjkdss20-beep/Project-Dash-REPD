@@ -75,3 +75,11 @@ export interface ValidationResult {
     mismatches: ValidationMismatch[];
     fullReport: FullValidationRow[]; // New field for the Excel-like view
 }
+
+export interface ValidationHistoryItem {
+    id: string;
+    timestamp: string;
+    fileNameIT: string;
+    fileNameMaster: string;
+    result: ValidationResult;
+}
