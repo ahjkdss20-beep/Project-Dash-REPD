@@ -163,19 +163,36 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
     try {
         const [itData, masterData] = await Promise.all([readCSV(fileIT), readCSV(fileMaster)]);
         
+        if (itData.length === 0 || masterData.length === 0) {
+            alert("Salah satu file kosong atau tidak valid.");
+            setIsValidating(false);
+            return;
+        }
+
+        // Helper: Find case-insensitive SYS_CODE header
+        const findSysCodeHeader = (row: any) => Object.keys(row).find(k => k.trim().toUpperCase() === 'SYS_CODE');
+
+        const sysKeyIT = findSysCodeHeader(itData[0]);
+        const sysKeyMaster = findSysCodeHeader(masterData[0]);
+
+        if (!sysKeyIT) throw new Error("Kolom SYS_CODE tidak ditemukan di file IT.");
+        if (!sysKeyMaster) throw new Error("Kolom SYS_CODE tidak ditemukan di file Master.");
+
         // Map IT Data by SYS_CODE
         const itMap = new Map<string, any>();
         itData.forEach(row => {
-            if (row['SYS_CODE']) itMap.set(row['SYS_CODE'], row);
+            const sysCode = row[sysKeyIT]?.trim();
+            if (sysCode) itMap.set(sysCode, row);
         });
 
         // Map Master Data by SYS_CODE
         const masterMap = new Map<string, any>();
         masterData.forEach(row => {
-            if (row['SYS_CODE']) masterMap.set(row['SYS_CODE'], row);
+            const sysCode = row[sysKeyMaster]?.trim();
+            if (sysCode) masterMap.set(sysCode, row);
         });
 
-        // Create a Union of all Keys
+        // Create a Union of all unique SYS_CODEs to iterate over
         const allSysCodes = new Set([...itMap.keys(), ...masterMap.keys()]);
 
         const fullReport: FullValidationRow[] = [];
@@ -326,9 +343,9 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
         };
         setHistory(prev => [historyItem, ...prev]);
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Validation Error:", error);
-        alert("Terjadi kesalahan saat membaca file. Pastikan format CSV sesuai template.");
+        alert(`Terjadi kesalahan: ${error.message}`);
     } finally {
         setIsValidating(false);
     }
@@ -382,6 +399,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
             <span className="font-mono text-accent bg-blue-50 px-1 rounded ml-1">Tarif</span>, 
             <span className="font-mono text-accent bg-blue-50 px-1 rounded ml-1">sla_form</span>, dan 
             <span className="font-mono text-accent bg-blue-50 px-1 rounded ml-1">sla_thru</span>.
+            <br/><span className="text-xs italic mt-1 inline-block">Sistem menggunakan <strong>SYS_CODE</strong> sebagai acuan lookup data.</span>
         </p>
       </div>
 
