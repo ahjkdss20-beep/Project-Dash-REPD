@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Upload, FileUp, AlertTriangle, CheckCircle2, Download, Eye, X, Table as TableIcon } from 'lucide-react';
-import { ValidationResult, ValidationMismatch, FullValidationRow } from '../types';
+import { ValidationResult, ValidationMismatch, FullValidationRow, ValidationDetail } from '../types';
 
 const ValidationPage: React.FC = () => {
   const [fileIT, setFileIT] = useState<File | null>(null);
@@ -31,7 +31,7 @@ const ValidationPage: React.FC = () => {
         content = 'ORIGIN,DEST,SYS_CODE,SERVICE,TARIF,SLA_FORM,SLA_THRU\nMES10612,AMI10000,MES10612AMI10000,REG23,59000,3,5';
         filename = 'Template_Data_IT.csv';
     } else {
-        // Template based on Gambar 2 (Master Data) - UPDATED to match IT structure (removed 3 Code, City, etc)
+        // Template based on Gambar 2 (Master Data) - UPDATED to match IT structure
         content = 'ORIGIN,DEST,SYS_CODE,Service REG,Tarif REG,sla form REG,sla thru REG\nDJJ10000,AMI10000,DJJ10000AMI10000,REG23,107000,4,5';
         filename = 'Template_Master_Data.csv';
     }
@@ -52,7 +52,7 @@ const ValidationPage: React.FC = () => {
     
     const data = rowsToDownload || result.fullReport;
 
-    // Header matching Gambar 2 (Updated: Removed 3 Code)
+    // Header matching Gambar 2
     const header = [
         'ORIGIN', 'DEST', 'SYS_CODE', 
         'Service REG', 'Tarif REG', 'sla form REG', 'sla thru REG', 
@@ -86,83 +86,173 @@ const ValidationPage: React.FC = () => {
     window.URL.revokeObjectURL(url);
   };
 
-  const processValidation = () => {
+  // Helper to read and parse CSV file
+  const readCSV = (file: File): Promise<any[]> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target?.result as string;
+        if (!text) {
+           resolve([]);
+           return;
+        }
+        
+        // Simple CSV parser
+        const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+        if (lines.length < 2) {
+           resolve([]);
+           return;
+        }
+        
+        const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+        
+        const data = lines.slice(1).map(line => {
+            // Handle simple comma split (Note: does not handle commas inside quotes for this demo)
+            const values = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+            const row: any = {};
+            headers.forEach((header, idx) => {
+                row[header] = values[idx] || '';
+            });
+            return row;
+        });
+        resolve(data);
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsText(file);
+    });
+  };
+
+  const processValidation = async () => {
     if (!fileIT || !fileMaster) return;
     
     setIsValidating(true);
+    setResult(null);
 
-    // SIMULATION of validation logic
-    setTimeout(() => {
-        // Generate mock full report data (250 rows)
+    try {
+        const [itData, masterData] = await Promise.all([readCSV(fileIT), readCSV(fileMaster)]);
+        
+        // Index Master Data by SYS_CODE for O(1) lookup
+        const masterMap = new Map<string, any>();
+        masterData.forEach(row => {
+            if (row['SYS_CODE']) {
+                masterMap.set(row['SYS_CODE'], row);
+            }
+        });
+
         const fullReport: FullValidationRow[] = [];
         const mismatches: ValidationMismatch[] = [];
+        let matchesCount = 0;
 
-        // 1. Generate Matching Rows
-        for (let i = 0; i < 242; i++) {
-            fullReport.push({
-                origin: `DJJ100${i.toString().padStart(2, '0')}`,
-                dest: `AMI100${i.toString().padStart(2, '0')}`,
-                sysCode: `DJJ100${i}AMI100${i}`,
-                serviceMaster: 'REG23',
-                tarifMaster: 59000,
-                slaFormMaster: 3,
-                slaThruMaster: 5,
-                serviceIT: 'REG23',
-                tarifIT: 59000,
-                slaFormIT: 3,
-                slaThruIT: 5,
-                keterangan: 'Sesuai'
-            });
-        }
+        itData.forEach((itRow, index) => {
+            // Skip empty rows if any
+            if (!itRow['SYS_CODE'] && !itRow['ORIGIN']) return;
 
-        // 2. Add Mismatch Rows
-        // Row 243: Tarif Mismatch
-        fullReport.push({
-            origin: 'MES10612', dest: 'AMI10010', sysCode: 'MES10612AMI10010',
-            serviceMaster: 'REG23', tarifMaster: 60000, slaFormMaster: 3, slaThruMaster: 5,
-            serviceIT: 'REG23', tarifIT: 62000, slaFormIT: 3, slaThruIT: 6,
-            keterangan: 'Tidak sesuai : Tarif, SLA_THRU'
+            const sysCode = itRow['SYS_CODE'];
+            const masterRow = masterMap.get(sysCode);
+            
+            // Parse numerical values safely
+            const tarifIT = parseInt((itRow['TARIF'] || '0').replace(/[^0-9]/g, ''));
+            const slaFormIT = parseInt((itRow['SLA_FORM'] || '0').replace(/[^0-9]/g, ''));
+            const slaThruIT = parseInt((itRow['SLA_THRU'] || '0').replace(/[^0-9]/g, ''));
+
+            const tarifMaster = masterRow ? parseInt((masterRow['Tarif REG'] || '0').replace(/[^0-9]/g, '')) : 0;
+            const slaFormMaster = masterRow ? parseInt((masterRow['sla form REG'] || '0').replace(/[^0-9]/g, '')) : 0;
+            const slaThruMaster = masterRow ? parseInt((masterRow['sla thru REG'] || '0').replace(/[^0-9]/g, '')) : 0;
+
+            const reportRow: FullValidationRow = {
+                origin: itRow['ORIGIN'] || '',
+                dest: itRow['DEST'] || '',
+                sysCode: sysCode || '',
+                serviceMaster: masterRow ? (masterRow['Service REG'] || '') : '-',
+                tarifMaster: tarifMaster,
+                slaFormMaster: slaFormMaster,
+                slaThruMaster: slaThruMaster,
+                serviceIT: itRow['SERVICE'] || '',
+                tarifIT: tarifIT,
+                slaFormIT: slaFormIT,
+                slaThruIT: slaThruIT,
+                keterangan: ''
+            };
+
+            if (!masterRow) {
+                reportRow.keterangan = 'Tidak sesuai : Data Master tidak ditemukan';
+                mismatches.push({
+                    rowId: index + 1,
+                    reasons: ['Data Master tidak ditemukan'],
+                    details: []
+                });
+            } else {
+                const issues: string[] = [];
+                const details: ValidationDetail[] = [];
+
+                // 1. Service
+                const serviceMatch = reportRow.serviceIT === reportRow.serviceMaster;
+                if (!serviceMatch) issues.push('Service');
+                details.push({ 
+                    column: 'Service', 
+                    itValue: reportRow.serviceIT, 
+                    masterValue: reportRow.serviceMaster, 
+                    isMatch: serviceMatch 
+                });
+
+                // 2. Tarif
+                const tarifMatch = reportRow.tarifIT === reportRow.tarifMaster;
+                if (!tarifMatch) issues.push('Tarif');
+                details.push({ 
+                    column: 'Tarif', 
+                    itValue: reportRow.tarifIT, 
+                    masterValue: reportRow.tarifMaster, 
+                    isMatch: tarifMatch 
+                });
+
+                // 3. SLA Form
+                const slaFormMatch = reportRow.slaFormIT === reportRow.slaFormMaster;
+                if (!slaFormMatch) issues.push('SLA_FORM');
+                details.push({ 
+                    column: 'sla_form', 
+                    itValue: reportRow.slaFormIT, 
+                    masterValue: reportRow.slaFormMaster, 
+                    isMatch: slaFormMatch 
+                });
+
+                // 4. SLA Thru
+                const slaThruMatch = reportRow.slaThruIT === reportRow.slaThruMaster;
+                if (!slaThruMatch) issues.push('SLA_THRU');
+                details.push({ 
+                    column: 'sla_thru', 
+                    itValue: reportRow.slaThruIT, 
+                    masterValue: reportRow.slaThruMaster, 
+                    isMatch: slaThruMatch 
+                });
+
+                if (issues.length === 0) {
+                    reportRow.keterangan = 'Sesuai';
+                    matchesCount++;
+                } else {
+                    reportRow.keterangan = `Tidak sesuai : ${issues.join(', ')}`;
+                    mismatches.push({
+                        rowId: index + 1,
+                        reasons: issues.map(i => `${i} tidak sesuai`),
+                        details: details
+                    });
+                }
+            }
+            fullReport.push(reportRow);
         });
-        mismatches.push({
-            rowId: 243,
-            reasons: ['Tarif tidak sesuai', 'SLA_THRU tidak sesuai'],
-            details: [
-                { column: 'Service', itValue: 'REG23', masterValue: 'REG23', isMatch: true },
-                { column: 'Tarif', itValue: 62000, masterValue: 60000, isMatch: false },
-                { column: 'sla_form', itValue: 3, masterValue: 3, isMatch: true },
-                { column: 'sla_thru', itValue: 6, masterValue: 5, isMatch: false },
-            ]
-        });
 
-        // Other mismatches for demo
-        for(let k=0; k<7; k++) {
-             fullReport.push({
-                origin: `MES106${k}`, dest: `AMI2020${k}`, sysCode: `MES106${k}AMI2020${k}`,
-                serviceMaster: 'REG23', tarifMaster: 78000, slaFormMaster: 4, slaThruMaster: 7,
-                serviceIT: 'YES19', tarifIT: 78000, slaFormIT: 4, slaThruIT: 7,
-                keterangan: 'Tidak sesuai : Service'
-            });
-            mismatches.push({
-                rowId: 244 + k,
-                reasons: ['Service tidak sesuai'],
-                details: [
-                    { column: 'Service', itValue: 'YES19', masterValue: 'REG23', isMatch: false },
-                    { column: 'Tarif', itValue: 78000, masterValue: 78000, isMatch: true },
-                    { column: 'sla_form', itValue: 4, masterValue: 4, isMatch: true },
-                    { column: 'sla_thru', itValue: 7, masterValue: 7, isMatch: true },
-                ]
-            });
-        }
-
-        const mockResult: ValidationResult = {
-            totalRows: 250,
-            matches: 242,
+        setResult({
+            totalRows: fullReport.length,
+            matches: matchesCount,
             mismatches: mismatches,
             fullReport: fullReport
-        };
-        setResult(mockResult);
+        });
+
+    } catch (error) {
+        console.error("Validation Error:", error);
+        alert("Terjadi kesalahan saat membaca file. Pastikan format CSV sesuai template.");
+    } finally {
         setIsValidating(false);
-    }, 1500);
+    }
   };
 
   const handleOpenReport = (filter: 'ALL' | 'MATCH' | 'MISMATCH') => {
@@ -200,14 +290,14 @@ const ValidationPage: React.FC = () => {
                 <FileUp size={24} />
             </div>
             <h3 className="font-semibold text-slate-700 mb-1">Template Data IT</h3>
-            <p className="text-xs text-slate-400 mb-3">Upload file CSV/Excel</p>
+            <p className="text-xs text-slate-400 mb-3">Upload file CSV</p>
             
             <input 
                 type="file" 
                 onChange={(e) => handleFileChange(e, 'IT')}
                 className="hidden" 
                 id="file-it" 
-                accept=".csv, .xlsx, .xls"
+                accept=".csv"
             />
             <label 
                 htmlFor="file-it" 
@@ -232,14 +322,14 @@ const ValidationPage: React.FC = () => {
                 <FileUp size={24} />
             </div>
             <h3 className="font-semibold text-slate-700 mb-1">Template Master Data</h3>
-            <p className="text-xs text-slate-400 mb-3">Upload file CSV/Excel</p>
+            <p className="text-xs text-slate-400 mb-3">Upload file CSV</p>
             
             <input 
                 type="file" 
                 onChange={(e) => handleFileChange(e, 'MASTER')}
                 className="hidden" 
                 id="file-master" 
-                accept=".csv, .xlsx, .xls"
+                accept=".csv"
             />
             <label 
                 htmlFor="file-master" 
@@ -401,7 +491,7 @@ const ValidationPage: React.FC = () => {
                                 <th className="bg-yellow-300 px-2 py-3 border-r border-slate-300 min-w-[100px]">DEST</th>
                                 <th className="bg-yellow-300 px-2 py-3 border-r border-slate-300 min-w-[150px]">SYS_CODE</th>
                                 
-                                {/* Grey Headers (Master Data) - Removed 3 Code */}
+                                {/* Grey Headers (Master Data) */}
                                 <th className="bg-slate-200 px-2 py-3 border-r border-slate-300 min-w-[80px]">Service REG</th>
                                 <th className="bg-slate-200 px-2 py-3 border-r border-slate-300 min-w-[80px]">Tarif REG</th>
                                 <th className="bg-slate-200 px-2 py-3 border-r border-slate-300 min-w-[80px]">sla form REG</th>
