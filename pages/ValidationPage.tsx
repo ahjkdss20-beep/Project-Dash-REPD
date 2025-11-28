@@ -11,6 +11,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
   const [fileIT, setFileIT] = useState<File | null>(null);
   const [fileMaster, setFileMaster] = useState<File | null>(null);
   const [isValidating, setIsValidating] = useState(false);
+  const [progress, setProgress] = useState(0); // Progress state
   const [result, setResult] = useState<ValidationResult | null>(null);
   const [selectedMismatch, setSelectedMismatch] = useState<ValidationMismatch | null>(null);
   const [showFullReport, setShowFullReport] = useState(false);
@@ -45,6 +46,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
       setResult(null);
       setSelectedMismatch(null);
       setShowFullReport(false);
+      setProgress(0);
   }, [category]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'IT' | 'MASTER') => {
@@ -158,6 +160,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
     if (!fileIT || !fileMaster) return;
     
     setIsValidating(true);
+    setProgress(0);
     setResult(null);
 
     try {
@@ -193,134 +196,151 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
         });
 
         // Create a Union of all unique SYS_CODEs to iterate over
-        const allSysCodes = new Set([...itMap.keys(), ...masterMap.keys()]);
-
+        const allSysCodesArray = Array.from(new Set([...itMap.keys(), ...masterMap.keys()]));
+        
+        const totalItems = allSysCodesArray.length;
+        const CHUNK_SIZE = 1000; // Process 1000 rows per tick to allow UI update
+        
         const fullReport: FullValidationRow[] = [];
         const mismatches: ValidationMismatch[] = [];
         let matchesCount = 0;
         let blanksCount = 0;
 
-        let rowIndex = 0;
-        allSysCodes.forEach((sysCode) => {
-            rowIndex++;
-            const itRow = itMap.get(sysCode);
-            const masterRow = masterMap.get(sysCode);
+        // Async Batch Processing Loop
+        for (let i = 0; i < totalItems; i += CHUNK_SIZE) {
+            // Calculate slice for this chunk
+            const end = Math.min(i + CHUNK_SIZE, totalItems);
+            const chunk = allSysCodesArray.slice(i, end);
 
-            // Default values
-            let tarifIT = 0, slaFormIT = 0, slaThruIT = 0;
-            let tarifMaster = 0, slaFormMaster = 0, slaThruMaster = 0;
+            // Process chunk
+            chunk.forEach((sysCode, idx) => {
+                const rowIndex = i + idx + 1;
+                const itRow = itMap.get(sysCode);
+                const masterRow = masterMap.get(sysCode);
 
-            if (itRow) {
-                tarifIT = parseInt((itRow['TARIF'] || '0').replace(/[^0-9]/g, ''));
-                slaFormIT = parseInt((itRow['SLA_FORM'] || '0').replace(/[^0-9]/g, ''));
-                slaThruIT = parseInt((itRow['SLA_THRU'] || '0').replace(/[^0-9]/g, ''));
-            }
+                // Default values
+                let tarifIT = 0, slaFormIT = 0, slaThruIT = 0;
+                let tarifMaster = 0, slaFormMaster = 0, slaThruMaster = 0;
 
-            if (masterRow) {
-                tarifMaster = parseInt((masterRow['Tarif REG'] || '0').replace(/[^0-9]/g, ''));
-                slaFormMaster = parseInt((masterRow['sla form REG'] || '0').replace(/[^0-9]/g, ''));
-                slaThruMaster = parseInt((masterRow['sla thru REG'] || '0').replace(/[^0-9]/g, ''));
-            }
+                if (itRow) {
+                    tarifIT = parseInt((itRow['TARIF'] || '0').replace(/[^0-9]/g, ''));
+                    slaFormIT = parseInt((itRow['SLA_FORM'] || '0').replace(/[^0-9]/g, ''));
+                    slaThruIT = parseInt((itRow['SLA_THRU'] || '0').replace(/[^0-9]/g, ''));
+                }
 
-            // Construct Base Row
-            const reportRow: FullValidationRow = {
-                origin: (itRow ? itRow['ORIGIN'] : masterRow['ORIGIN']) || '',
-                dest: (itRow ? itRow['DEST'] : masterRow['DEST']) || '',
-                sysCode: sysCode || '',
-                
-                // Master Data Cols
-                serviceMaster: masterRow ? (masterRow['Service REG'] || '') : '-',
-                tarifMaster: masterRow ? tarifMaster : 0,
-                slaFormMaster: masterRow ? slaFormMaster : 0,
-                slaThruMaster: masterRow ? slaThruMaster : 0,
+                if (masterRow) {
+                    tarifMaster = parseInt((masterRow['Tarif REG'] || '0').replace(/[^0-9]/g, ''));
+                    slaFormMaster = parseInt((masterRow['sla form REG'] || '0').replace(/[^0-9]/g, ''));
+                    slaThruMaster = parseInt((masterRow['sla thru REG'] || '0').replace(/[^0-9]/g, ''));
+                }
 
-                // IT Data Cols
-                serviceIT: itRow ? (itRow['SERVICE'] || '') : '-',
-                tarifIT: itRow ? tarifIT : 0,
-                slaFormIT: itRow ? slaFormIT : 0,
-                slaThruIT: itRow ? slaThruIT : 0,
+                // Construct Base Row
+                const reportRow: FullValidationRow = {
+                    origin: (itRow ? itRow['ORIGIN'] : masterRow['ORIGIN']) || '',
+                    dest: (itRow ? itRow['DEST'] : masterRow['DEST']) || '',
+                    sysCode: sysCode || '',
+                    
+                    // Master Data Cols
+                    serviceMaster: masterRow ? (masterRow['Service REG'] || '') : '-',
+                    tarifMaster: masterRow ? tarifMaster : 0,
+                    slaFormMaster: masterRow ? slaFormMaster : 0,
+                    slaThruMaster: masterRow ? slaThruMaster : 0,
 
-                keterangan: ''
-            };
+                    // IT Data Cols
+                    serviceIT: itRow ? (itRow['SERVICE'] || '') : '-',
+                    tarifIT: itRow ? tarifIT : 0,
+                    slaFormIT: itRow ? slaFormIT : 0,
+                    slaThruIT: itRow ? slaThruIT : 0,
 
-            // VALIDATION LOGIC
-            if (!masterRow) {
-                // Exists in IT, Missing in Master
-                reportRow.keterangan = 'Master Data Tidak Ada';
-                blanksCount++;
-                mismatches.push({
-                    rowId: rowIndex,
-                    reasons: ['Master Data Tidak Ada'],
-                    details: []
-                });
-            } else if (!itRow) {
-                // Exists in Master, Missing in IT
-                reportRow.keterangan = 'Data IT Tidak Ada';
-                blanksCount++;
-                mismatches.push({
-                    rowId: rowIndex,
-                    reasons: ['Data IT Tidak Ada'],
-                    details: []
-                });
-            } else {
-                // Both Exist - Compare Values
-                const issues: string[] = [];
-                const details: ValidationDetail[] = [];
+                    keterangan: ''
+                };
 
-                // 1. Service
-                const serviceMatch = reportRow.serviceIT === reportRow.serviceMaster;
-                if (!serviceMatch) issues.push('Service');
-                details.push({ 
-                    column: 'Service', 
-                    itValue: reportRow.serviceIT, 
-                    masterValue: reportRow.serviceMaster, 
-                    isMatch: serviceMatch 
-                });
-
-                // 2. Tarif
-                const tarifMatch = reportRow.tarifIT === reportRow.tarifMaster;
-                if (!tarifMatch) issues.push('Tarif');
-                details.push({ 
-                    column: 'Tarif', 
-                    itValue: reportRow.tarifIT, 
-                    masterValue: reportRow.tarifMaster, 
-                    isMatch: tarifMatch 
-                });
-
-                // 3. SLA Form
-                const slaFormMatch = reportRow.slaFormIT === reportRow.slaFormMaster;
-                if (!slaFormMatch) issues.push('SLA_FORM');
-                details.push({ 
-                    column: 'sla_form', 
-                    itValue: reportRow.slaFormIT, 
-                    masterValue: reportRow.slaFormMaster, 
-                    isMatch: slaFormMatch 
-                });
-
-                // 4. SLA Thru
-                const slaThruMatch = reportRow.slaThruIT === reportRow.slaThruMaster;
-                if (!slaThruMatch) issues.push('SLA_THRU');
-                details.push({ 
-                    column: 'sla_thru', 
-                    itValue: reportRow.slaThruIT, 
-                    masterValue: reportRow.slaThruMaster, 
-                    isMatch: slaThruMatch 
-                });
-
-                if (issues.length === 0) {
-                    reportRow.keterangan = 'Sesuai';
-                    matchesCount++;
-                } else {
-                    reportRow.keterangan = `Tidak sesuai : ${issues.join(', ')}`;
+                // VALIDATION LOGIC
+                if (!masterRow) {
+                    // Exists in IT, Missing in Master
+                    reportRow.keterangan = 'Master Data Tidak Ada';
+                    blanksCount++;
                     mismatches.push({
                         rowId: rowIndex,
-                        reasons: issues.map(i => `${i} tidak sesuai`),
-                        details: details
+                        reasons: ['Master Data Tidak Ada'],
+                        details: []
                     });
+                } else if (!itRow) {
+                    // Exists in Master, Missing in IT
+                    reportRow.keterangan = 'Data IT Tidak Ada';
+                    blanksCount++;
+                    mismatches.push({
+                        rowId: rowIndex,
+                        reasons: ['Data IT Tidak Ada'],
+                        details: []
+                    });
+                } else {
+                    // Both Exist - Compare Values
+                    const issues: string[] = [];
+                    const details: ValidationDetail[] = [];
+
+                    // 1. Service
+                    const serviceMatch = reportRow.serviceIT === reportRow.serviceMaster;
+                    if (!serviceMatch) issues.push('Service');
+                    details.push({ 
+                        column: 'Service', 
+                        itValue: reportRow.serviceIT, 
+                        masterValue: reportRow.serviceMaster, 
+                        isMatch: serviceMatch 
+                    });
+
+                    // 2. Tarif
+                    const tarifMatch = reportRow.tarifIT === reportRow.tarifMaster;
+                    if (!tarifMatch) issues.push('Tarif');
+                    details.push({ 
+                        column: 'Tarif', 
+                        itValue: reportRow.tarifIT, 
+                        masterValue: reportRow.tarifMaster, 
+                        isMatch: tarifMatch 
+                    });
+
+                    // 3. SLA Form
+                    const slaFormMatch = reportRow.slaFormIT === reportRow.slaFormMaster;
+                    if (!slaFormMatch) issues.push('SLA_FORM');
+                    details.push({ 
+                        column: 'sla_form', 
+                        itValue: reportRow.slaFormIT, 
+                        masterValue: reportRow.slaFormMaster, 
+                        isMatch: slaFormMatch 
+                    });
+
+                    // 4. SLA Thru
+                    const slaThruMatch = reportRow.slaThruIT === reportRow.slaThruMaster;
+                    if (!slaThruMatch) issues.push('SLA_THRU');
+                    details.push({ 
+                        column: 'sla_thru', 
+                        itValue: reportRow.slaThruIT, 
+                        masterValue: reportRow.slaThruMaster, 
+                        isMatch: slaThruMatch 
+                    });
+
+                    if (issues.length === 0) {
+                        reportRow.keterangan = 'Sesuai';
+                        matchesCount++;
+                    } else {
+                        reportRow.keterangan = `Tidak sesuai : ${issues.join(', ')}`;
+                        mismatches.push({
+                            rowId: rowIndex,
+                            reasons: issues.map(i => `${i} tidak sesuai`),
+                            details: details
+                        });
+                    }
                 }
-            }
-            fullReport.push(reportRow);
-        });
+                fullReport.push(reportRow);
+            });
+
+            // Update Progress
+            const percentage = Math.round((end / totalItems) * 100);
+            setProgress(percentage);
+            
+            // Allow UI to update
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
 
         const validationResult: ValidationResult = {
             totalRows: fullReport.length,
@@ -348,6 +368,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
         alert(`Terjadi kesalahan: ${error.message}`);
     } finally {
         setIsValidating(false);
+        setProgress(0);
     }
   };
 
@@ -469,26 +490,36 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
         </div>
       </div>
 
-      <div className="flex justify-center">
-        <button 
-            disabled={!fileIT || !fileMaster || isValidating}
-            onClick={processValidation}
-            className={`
-                px-8 py-3 rounded-full font-semibold shadow-lg transition flex items-center gap-2
-                ${(!fileIT || !fileMaster) 
-                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed' 
-                    : 'bg-accent text-white hover:bg-blue-600 hover:scale-105'}
-            `}
-        >
-            {isValidating ? (
-                <>Processing...</>
-            ) : (
-                <>
-                    <Upload size={20} />
-                    Mulai Validasi {category === 'TARIF' ? 'Tarif' : 'Biaya'}
-                </>
-            )}
-        </button>
+      <div className="flex flex-col items-center gap-4">
+        {isValidating ? (
+             <div className="w-full max-w-md bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm font-semibold text-slate-700">Validating...</span>
+                    <span className="text-sm font-bold text-accent">{progress}%</span>
+                </div>
+                <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                    <div 
+                        className="bg-accent h-2.5 rounded-full transition-all duration-200 ease-out" 
+                        style={{ width: `${progress}%` }}
+                    ></div>
+                </div>
+                <p className="text-center text-xs text-slate-400 mt-2">Mohon tunggu, sedang memproses data.</p>
+             </div>
+        ) : (
+            <button 
+                disabled={!fileIT || !fileMaster || isValidating}
+                onClick={processValidation}
+                className={`
+                    px-8 py-3 rounded-full font-semibold shadow-lg transition flex items-center gap-2
+                    ${(!fileIT || !fileMaster) 
+                        ? 'bg-slate-300 text-slate-500 cursor-not-allowed' 
+                        : 'bg-accent text-white hover:bg-blue-600 hover:scale-105'}
+                `}
+            >
+                <Upload size={20} />
+                Mulai Validasi {category === 'TARIF' ? 'Tarif' : 'Biaya'}
+            </button>
+        )}
       </div>
 
       {/* Validation Results Summary */}
