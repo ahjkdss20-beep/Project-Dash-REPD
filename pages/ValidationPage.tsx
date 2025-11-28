@@ -120,7 +120,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
     window.URL.revokeObjectURL(url);
   };
 
-  // Helper to read and parse CSV file
+  // Helper to read and parse CSV file robustly
   const readCSV = (file: File): Promise<any[]> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -131,21 +131,37 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
            return;
         }
         
-        // Simple CSV parser
-        const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+        // 1. Normalize line endings (Handle Windows \r\n, Mac \r, Unix \n)
+        const normalizedText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        
+        // 2. Filter empty lines
+        const lines = normalizedText.split('\n').filter(line => line.trim() !== '');
+        
         if (lines.length < 2) {
            resolve([]);
            return;
         }
+
+        // 3. Detect Delimiter (Comma vs Semicolon)
+        // Check the first line (header)
+        const firstLine = lines[0];
+        const commaCount = (firstLine.match(/,/g) || []).length;
+        const semiCount = (firstLine.match(/;/g) || []).length;
+        const delimiter = semiCount > commaCount ? ';' : ',';
         
-        const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+        // Helper to parse a line
+        const parseLine = (line: string) => line.split(delimiter).map(v => v.trim().replace(/^"|"$/g, ''));
+
+        const headers = parseLine(lines[0]);
         
         const data = lines.slice(1).map(line => {
-            // Handle simple comma split
-            const values = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+            const values = parseLine(line);
             const row: any = {};
             headers.forEach((header, idx) => {
-                row[header] = values[idx] || '';
+                // Only map if header exists
+                if (header) {
+                    row[header] = values[idx] || '';
+                }
             });
             return row;
         });
@@ -167,7 +183,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
         const [itData, masterData] = await Promise.all([readCSV(fileIT), readCSV(fileMaster)]);
         
         if (itData.length === 0 || masterData.length === 0) {
-            alert("Salah satu file kosong atau tidak valid.");
+            alert("Salah satu file kosong atau format tidak valid (tidak ada data).");
             setIsValidating(false);
             return;
         }
@@ -178,8 +194,8 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
         const sysKeyIT = findSysCodeHeader(itData[0]);
         const sysKeyMaster = findSysCodeHeader(masterData[0]);
 
-        if (!sysKeyIT) throw new Error("Kolom SYS_CODE tidak ditemukan di file IT.");
-        if (!sysKeyMaster) throw new Error("Kolom SYS_CODE tidak ditemukan di file Master.");
+        if (!sysKeyIT) throw new Error("Kolom SYS_CODE tidak ditemukan di file IT. Pastikan header CSV benar.");
+        if (!sysKeyMaster) throw new Error("Kolom SYS_CODE tidak ditemukan di file Master. Pastikan header CSV benar.");
 
         // Map IT Data by SYS_CODE
         const itMap = new Map<string, any>();
@@ -199,6 +215,11 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
         const allSysCodesArray = Array.from(new Set([...itMap.keys(), ...masterMap.keys()]));
         
         const totalItems = allSysCodesArray.length;
+        
+        if (totalItems === 0) {
+             throw new Error("Tidak ada data SYS_CODE yang ditemukan untuk divalidasi.");
+        }
+
         const CHUNK_SIZE = 1000; // Process 1000 rows per tick to allow UI update
         
         const fullReport: FullValidationRow[] = [];
