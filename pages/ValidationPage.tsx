@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Upload, FileUp, AlertTriangle, CheckCircle2, Download, Eye, X, Table as TableIcon, History, RotateCcw, Trash2 } from 'lucide-react';
+import { Upload, FileUp, AlertTriangle, CheckCircle2, Download, Eye, X, Table as TableIcon, History, RotateCcw, Trash2, HelpCircle } from 'lucide-react';
 import { ValidationResult, ValidationMismatch, FullValidationRow, ValidationDetail, ValidationHistoryItem, ValidationCategory } from '../types';
 
 interface ValidationPageProps {
@@ -19,7 +19,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
   const [history, setHistory] = useState<ValidationHistoryItem[]>([]);
 
   // Filter state for the full report modal
-  const [reportFilter, setReportFilter] = useState<'ALL' | 'MATCH' | 'MISMATCH'>('ALL');
+  const [reportFilter, setReportFilter] = useState<'ALL' | 'MATCH' | 'MISMATCH' | 'BLANK'>('ALL');
 
   // Load history from local storage on mount
   useEffect(() => {
@@ -163,57 +163,90 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
     try {
         const [itData, masterData] = await Promise.all([readCSV(fileIT), readCSV(fileMaster)]);
         
-        // Index Master Data by SYS_CODE for O(1) lookup
+        // Map IT Data by SYS_CODE
+        const itMap = new Map<string, any>();
+        itData.forEach(row => {
+            if (row['SYS_CODE']) itMap.set(row['SYS_CODE'], row);
+        });
+
+        // Map Master Data by SYS_CODE
         const masterMap = new Map<string, any>();
         masterData.forEach(row => {
-            if (row['SYS_CODE']) {
-                masterMap.set(row['SYS_CODE'], row);
-            }
+            if (row['SYS_CODE']) masterMap.set(row['SYS_CODE'], row);
         });
+
+        // Create a Union of all Keys
+        const allSysCodes = new Set([...itMap.keys(), ...masterMap.keys()]);
 
         const fullReport: FullValidationRow[] = [];
         const mismatches: ValidationMismatch[] = [];
         let matchesCount = 0;
+        let blanksCount = 0;
 
-        itData.forEach((itRow, index) => {
-            // Skip empty rows if any
-            if (!itRow['SYS_CODE'] && !itRow['ORIGIN']) return;
-
-            const sysCode = itRow['SYS_CODE'];
+        let rowIndex = 0;
+        allSysCodes.forEach((sysCode) => {
+            rowIndex++;
+            const itRow = itMap.get(sysCode);
             const masterRow = masterMap.get(sysCode);
-            
-            // Parse numerical values safely
-            const tarifIT = parseInt((itRow['TARIF'] || '0').replace(/[^0-9]/g, ''));
-            const slaFormIT = parseInt((itRow['SLA_FORM'] || '0').replace(/[^0-9]/g, ''));
-            const slaThruIT = parseInt((itRow['SLA_THRU'] || '0').replace(/[^0-9]/g, ''));
 
-            const tarifMaster = masterRow ? parseInt((masterRow['Tarif REG'] || '0').replace(/[^0-9]/g, '')) : 0;
-            const slaFormMaster = masterRow ? parseInt((masterRow['sla form REG'] || '0').replace(/[^0-9]/g, '')) : 0;
-            const slaThruMaster = masterRow ? parseInt((masterRow['sla thru REG'] || '0').replace(/[^0-9]/g, '')) : 0;
+            // Default values
+            let tarifIT = 0, slaFormIT = 0, slaThruIT = 0;
+            let tarifMaster = 0, slaFormMaster = 0, slaThruMaster = 0;
 
+            if (itRow) {
+                tarifIT = parseInt((itRow['TARIF'] || '0').replace(/[^0-9]/g, ''));
+                slaFormIT = parseInt((itRow['SLA_FORM'] || '0').replace(/[^0-9]/g, ''));
+                slaThruIT = parseInt((itRow['SLA_THRU'] || '0').replace(/[^0-9]/g, ''));
+            }
+
+            if (masterRow) {
+                tarifMaster = parseInt((masterRow['Tarif REG'] || '0').replace(/[^0-9]/g, ''));
+                slaFormMaster = parseInt((masterRow['sla form REG'] || '0').replace(/[^0-9]/g, ''));
+                slaThruMaster = parseInt((masterRow['sla thru REG'] || '0').replace(/[^0-9]/g, ''));
+            }
+
+            // Construct Base Row
             const reportRow: FullValidationRow = {
-                origin: itRow['ORIGIN'] || '',
-                dest: itRow['DEST'] || '',
+                origin: (itRow ? itRow['ORIGIN'] : masterRow['ORIGIN']) || '',
+                dest: (itRow ? itRow['DEST'] : masterRow['DEST']) || '',
                 sysCode: sysCode || '',
+                
+                // Master Data Cols
                 serviceMaster: masterRow ? (masterRow['Service REG'] || '') : '-',
-                tarifMaster: tarifMaster,
-                slaFormMaster: slaFormMaster,
-                slaThruMaster: slaThruMaster,
-                serviceIT: itRow['SERVICE'] || '',
-                tarifIT: tarifIT,
-                slaFormIT: slaFormIT,
-                slaThruIT: slaThruIT,
+                tarifMaster: masterRow ? tarifMaster : 0,
+                slaFormMaster: masterRow ? slaFormMaster : 0,
+                slaThruMaster: masterRow ? slaThruMaster : 0,
+
+                // IT Data Cols
+                serviceIT: itRow ? (itRow['SERVICE'] || '') : '-',
+                tarifIT: itRow ? tarifIT : 0,
+                slaFormIT: itRow ? slaFormIT : 0,
+                slaThruIT: itRow ? slaThruIT : 0,
+
                 keterangan: ''
             };
 
+            // VALIDATION LOGIC
             if (!masterRow) {
-                reportRow.keterangan = 'Tidak sesuai : Data Master tidak ditemukan';
+                // Exists in IT, Missing in Master
+                reportRow.keterangan = 'Master Data Tidak Ada';
+                blanksCount++;
                 mismatches.push({
-                    rowId: index + 1,
-                    reasons: ['Data Master tidak ditemukan'],
+                    rowId: rowIndex,
+                    reasons: ['Master Data Tidak Ada'],
+                    details: []
+                });
+            } else if (!itRow) {
+                // Exists in Master, Missing in IT
+                reportRow.keterangan = 'Data IT Tidak Ada';
+                blanksCount++;
+                mismatches.push({
+                    rowId: rowIndex,
+                    reasons: ['Data IT Tidak Ada'],
                     details: []
                 });
             } else {
+                // Both Exist - Compare Values
                 const issues: string[] = [];
                 const details: ValidationDetail[] = [];
 
@@ -263,7 +296,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
                 } else {
                     reportRow.keterangan = `Tidak sesuai : ${issues.join(', ')}`;
                     mismatches.push({
-                        rowId: index + 1,
+                        rowId: rowIndex,
                         reasons: issues.map(i => `${i} tidak sesuai`),
                         details: details
                     });
@@ -275,6 +308,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
         const validationResult: ValidationResult = {
             totalRows: fullReport.length,
             matches: matchesCount,
+            blanks: blanksCount,
             mismatches: mismatches,
             fullReport: fullReport
         };
@@ -300,7 +334,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
     }
   };
 
-  const handleOpenReport = (filter: 'ALL' | 'MATCH' | 'MISMATCH') => {
+  const handleOpenReport = (filter: 'ALL' | 'MATCH' | 'MISMATCH' | 'BLANK') => {
       setReportFilter(filter);
       setShowFullReport(true);
   };
@@ -323,15 +357,16 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
       if (!result) return [];
       if (reportFilter === 'ALL') return result.fullReport;
       if (reportFilter === 'MATCH') return result.fullReport.filter(r => r.keterangan === 'Sesuai');
-      if (reportFilter === 'MISMATCH') return result.fullReport.filter(r => r.keterangan !== 'Sesuai');
+      if (reportFilter === 'BLANK') return result.fullReport.filter(r => r.keterangan === 'Data IT Tidak Ada' || r.keterangan === 'Master Data Tidak Ada');
+      if (reportFilter === 'MISMATCH') {
+          // Exclude blanks from strict mismatch view if desired, or include all non-matches
+          return result.fullReport.filter(r => r.keterangan !== 'Sesuai' && r.keterangan !== 'Data IT Tidak Ada' && r.keterangan !== 'Master Data Tidak Ada');
+      }
       return [];
   };
 
   const displayedRows = getDisplayedRows();
 
-  // Filter history based on current category
-  // If item.category is undefined, assume it belongs to TARIF (legacy data) or show in both? 
-  // For strictness, let's show only matching categories.
   const displayedHistory = history.filter(item => {
       if (!item.category) return category === 'TARIF'; // Backward compatibility default
       return item.category === category;
@@ -342,7 +377,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
       <div className="text-center space-y-2">
         <h2 className="text-2xl font-bold text-slate-800">Validasi {category === 'TARIF' ? 'Tarif' : 'Biaya'} Otomatis</h2>
         <p className="text-slate-500 max-w-2xl mx-auto">
-            Upload <strong>Data IT</strong> dan <strong>Master Data {category === 'TARIF' ? 'Tarif' : 'Biaya'}</strong>. Sistem akan memvalidasi kolom:
+            Upload <strong>Data IT</strong> dan <strong>Master Data {category === 'TARIF' ? 'Tarif' : 'Biaya'}</strong>. Sistem akan memvalidasi kelengkapan data dan kesesuaian kolom:
             <span className="font-mono text-accent bg-blue-50 px-1 rounded ml-1">Service</span>, 
             <span className="font-mono text-accent bg-blue-50 px-1 rounded ml-1">Tarif</span>, 
             <span className="font-mono text-accent bg-blue-50 px-1 rounded ml-1">sla_form</span>, dan 
@@ -459,8 +494,8 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
                   </div>
               </div>
               
-              {/* Clickable Summary Cards */}
-              <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Clickable Summary Cards - UPDATED to 4 columns */}
+              <div className="p-6 grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div 
                     onClick={() => handleOpenReport('ALL')}
                     className="bg-blue-50 p-4 rounded-lg border border-blue-100 hover:bg-blue-100 transition cursor-pointer"
@@ -480,17 +515,26 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
                 <div 
                     onClick={() => handleOpenReport('MISMATCH')}
                     className="bg-red-50 p-4 rounded-lg border border-red-100 hover:bg-red-100 transition cursor-pointer"
-                    title="Klik untuk melihat data tidak sesuai"
+                    title="Klik untuk melihat data tidak sesuai (Nilai Berbeda)"
                 >
                     <p className="text-sm text-red-600 mb-1">Tidak Sesuai</p>
-                    <p className="text-3xl font-bold text-red-800">{result.totalRows - result.matches}</p>
+                    <p className="text-3xl font-bold text-red-800">{result.mismatches.length - result.blanks}</p>
+                </div>
+                 {/* NEW BLANK BOX */}
+                <div 
+                    onClick={() => handleOpenReport('BLANK')}
+                    className="bg-slate-100 p-4 rounded-lg border border-slate-200 hover:bg-slate-200 transition cursor-pointer"
+                    title="Klik untuk melihat data yang kosong di salah satu file"
+                >
+                    <p className="text-sm text-slate-600 mb-1">Data Blank</p>
+                    <p className="text-3xl font-bold text-slate-800">{result.blanks}</p>
                 </div>
               </div>
 
               {result.mismatches.length > 0 && (
                 <div className="border-t border-slate-200">
                     <div className="bg-slate-50 px-6 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                        Quick List Ketidaksesuaian (Klik untuk detail per baris)
+                        Quick List Ketidaksesuaian & Data Kosong (Klik untuk detail per baris)
                     </div>
                     <div className="divide-y divide-slate-100 max-h-64 overflow-y-auto">
                         {result.mismatches.map((item, idx) => (
@@ -500,12 +544,21 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
                                 className="px-6 py-3 flex items-center justify-between hover:bg-blue-50 cursor-pointer group transition"
                             >
                                 <div className="flex items-start gap-3">
-                                    <AlertTriangle size={18} className="text-red-500 mt-0.5 flex-shrink-0" />
+                                    {/* Icon differs for Blanks vs Mismatches */}
+                                    {item.reasons[0].includes('Tidak Ada') ? (
+                                        <HelpCircle size={18} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                                    ) : (
+                                        <AlertTriangle size={18} className="text-red-500 mt-0.5 flex-shrink-0" />
+                                    )}
+                                    
                                     <div>
                                         <p className="text-sm font-medium text-slate-800">Row ID: {item.rowId}</p>
                                         <div className="flex flex-wrap gap-2 mt-1">
                                             {item.reasons.map((reason, rIdx) => (
-                                                <span key={rIdx} className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
+                                                <span 
+                                                    key={rIdx} 
+                                                    className={`text-xs px-2 py-0.5 rounded-full ${reason.includes('Tidak Ada') ? 'bg-slate-200 text-slate-700' : 'bg-red-100 text-red-700'}`}
+                                                >
                                                     {reason}
                                                 </span>
                                             ))}
@@ -556,7 +609,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
                             <td className="px-6 py-3 text-slate-800 font-medium">{item.fileNameMaster}</td>
                             <td className="px-6 py-3">
                                 <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-800">
-                                    {item.result.matches} / {item.result.totalRows} Sesuai
+                                    {item.result.matches} Sesuai / {item.result.blanks} Blank
                                 </span>
                             </td>
                             <td className="px-6 py-3">
@@ -589,7 +642,7 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
                     <div>
                         <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
                            <TableIcon size={20} className="text-accent" />
-                           Laporan Validasi {category}: {reportFilter === 'ALL' ? 'Semua Data' : (reportFilter === 'MATCH' ? 'Data Sesuai' : 'Data Tidak Sesuai')}
+                           Laporan Validasi {category}: {reportFilter === 'ALL' ? 'Semua Data' : (reportFilter === 'MATCH' ? 'Data Sesuai' : (reportFilter === 'BLANK' ? 'Data Blank/Kosong' : 'Data Tidak Sesuai'))}
                         </h3>
                         <p className="text-xs text-slate-500">Menampilkan {displayedRows.length} data</p>
                     </div>
@@ -643,19 +696,38 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
                                         <td className="px-2 py-2 border-r border-slate-100">{row.sysCode}</td>
                                         
                                         {/* Master Data */}
-                                        <td className="px-2 py-2 border-r border-slate-100 bg-slate-50">{row.serviceMaster}</td>
-                                        <td className="px-2 py-2 border-r border-slate-100 bg-slate-50 text-right">{row.tarifMaster.toLocaleString()}</td>
-                                        <td className="px-2 py-2 border-r border-slate-100 bg-slate-50 text-center">{row.slaFormMaster}</td>
-                                        <td className="px-2 py-2 border-r border-slate-100 bg-slate-50 text-center">{row.slaThruMaster}</td>
+                                        <td className="px-2 py-2 border-r border-slate-100 bg-slate-50">
+                                            {row.serviceMaster === '-' ? <span className="text-slate-300">-</span> : row.serviceMaster}
+                                        </td>
+                                        <td className="px-2 py-2 border-r border-slate-100 bg-slate-50 text-right">
+                                            {row.serviceMaster === '-' ? <span className="text-slate-300">-</span> : row.tarifMaster.toLocaleString()}
+                                        </td>
+                                        <td className="px-2 py-2 border-r border-slate-100 bg-slate-50 text-center">
+                                            {row.serviceMaster === '-' ? <span className="text-slate-300">-</span> : row.slaFormMaster}
+                                        </td>
+                                        <td className="px-2 py-2 border-r border-slate-100 bg-slate-50 text-center">
+                                            {row.serviceMaster === '-' ? <span className="text-slate-300">-</span> : row.slaThruMaster}
+                                        </td>
 
                                         {/* IT Data */}
-                                        <td className="px-2 py-2 border-r border-slate-100">{row.serviceIT}</td>
-                                        <td className="px-2 py-2 border-r border-slate-100 text-right">{row.tarifIT.toLocaleString()}</td>
-                                        <td className="px-2 py-2 border-r border-slate-100 text-center">{row.slaFormIT}</td>
-                                        <td className="px-2 py-2 border-r border-slate-100 text-center">{row.slaThruIT}</td>
+                                        <td className="px-2 py-2 border-r border-slate-100">
+                                            {row.serviceIT === '-' ? <span className="text-slate-300">-</span> : row.serviceIT}
+                                        </td>
+                                        <td className="px-2 py-2 border-r border-slate-100 text-right">
+                                            {row.serviceIT === '-' ? <span className="text-slate-300">-</span> : row.tarifIT.toLocaleString()}
+                                        </td>
+                                        <td className="px-2 py-2 border-r border-slate-100 text-center">
+                                            {row.serviceIT === '-' ? <span className="text-slate-300">-</span> : row.slaFormIT}
+                                        </td>
+                                        <td className="px-2 py-2 border-r border-slate-100 text-center">
+                                            {row.serviceIT === '-' ? <span className="text-slate-300">-</span> : row.slaThruIT}
+                                        </td>
 
                                         {/* Keterangan */}
-                                        <td className={`px-2 py-2 font-medium ${row.keterangan === 'Sesuai' ? 'text-slate-800' : 'text-red-600'}`}>
+                                        <td className={`px-2 py-2 font-medium ${
+                                            row.keterangan === 'Sesuai' ? 'text-slate-800' : 
+                                            (row.keterangan.includes('Tidak Ada') ? 'text-orange-600' : 'text-red-600')
+                                        }`}>
                                             {row.keterangan}
                                         </td>
                                     </tr>
@@ -688,40 +760,52 @@ const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
                     </button>
                 </div>
                 <div className="p-6">
-                    <table className="w-full text-sm text-left">
-                        <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
-                            <tr>
-                                <th className="px-4 py-3">Column</th>
-                                <th className="px-4 py-3">Data IT (Uploaded)</th>
-                                <th className="px-4 py-3">Master Data</th>
-                                <th className="px-4 py-3 text-center">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                            {selectedMismatch.details.map((detail, idx) => (
-                                <tr key={idx} className={!detail.isMatch ? "bg-red-50/50" : ""}>
-                                    <td className="px-4 py-3 font-medium text-slate-700">{detail.column}</td>
-                                    <td className={`px-4 py-3 ${!detail.isMatch ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>
-                                        {detail.itValue}
-                                    </td>
-                                    <td className={`px-4 py-3 ${!detail.isMatch ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
-                                        {detail.masterValue}
-                                    </td>
-                                    <td className="px-4 py-3 text-center">
-                                        {detail.isMatch ? (
-                                            <span className="inline-flex items-center text-green-600 text-xs font-medium bg-green-100 px-2 py-1 rounded-full">
-                                                <CheckCircle2 size={12} className="mr-1"/> Sesuai
-                                            </span>
-                                        ) : (
-                                            <span className="inline-flex items-center text-red-600 text-xs font-medium bg-red-100 px-2 py-1 rounded-full">
-                                                <X size={12} className="mr-1"/> Tidak Sesuai
-                                            </span>
-                                        )}
-                                    </td>
+                    {/* Check if it's a BLANK Case first to show simple message */}
+                    {selectedMismatch.reasons.some(r => r.includes('Tidak Ada')) ? (
+                         <div className="text-center py-8">
+                            <HelpCircle size={48} className="mx-auto text-slate-300 mb-4" />
+                            <h4 className="text-lg font-semibold text-slate-700 mb-2">Data Tidak Lengkap</h4>
+                            <p className="text-slate-500">
+                                {selectedMismatch.reasons[0]}. <br/>
+                                Mohon cek kelengkapan data di kedua file.
+                            </p>
+                         </div>
+                    ) : (
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                                <tr>
+                                    <th className="px-4 py-3">Column</th>
+                                    <th className="px-4 py-3">Data IT (Uploaded)</th>
+                                    <th className="px-4 py-3">Master Data</th>
+                                    <th className="px-4 py-3 text-center">Status</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {selectedMismatch.details.map((detail, idx) => (
+                                    <tr key={idx} className={!detail.isMatch ? "bg-red-50/50" : ""}>
+                                        <td className="px-4 py-3 font-medium text-slate-700">{detail.column}</td>
+                                        <td className={`px-4 py-3 ${!detail.isMatch ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>
+                                            {detail.itValue}
+                                        </td>
+                                        <td className={`px-4 py-3 ${!detail.isMatch ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
+                                            {detail.masterValue}
+                                        </td>
+                                        <td className="px-4 py-3 text-center">
+                                            {detail.isMatch ? (
+                                                <span className="inline-flex items-center text-green-600 text-xs font-medium bg-green-100 px-2 py-1 rounded-full">
+                                                    <CheckCircle2 size={12} className="mr-1"/> Sesuai
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center text-red-600 text-xs font-medium bg-red-100 px-2 py-1 rounded-full">
+                                                    <X size={12} className="mr-1"/> Tidak Sesuai
+                                                </span>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
                 </div>
                 <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
                     <button 
