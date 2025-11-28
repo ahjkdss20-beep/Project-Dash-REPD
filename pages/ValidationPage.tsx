@@ -1,9 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { Upload, FileUp, AlertTriangle, CheckCircle2, Download, Eye, X, Table as TableIcon, History, RotateCcw, Trash2 } from 'lucide-react';
-import { ValidationResult, ValidationMismatch, FullValidationRow, ValidationDetail, ValidationHistoryItem } from '../types';
+import { ValidationResult, ValidationMismatch, FullValidationRow, ValidationDetail, ValidationHistoryItem, ValidationCategory } from '../types';
 
-const ValidationPage: React.FC = () => {
+interface ValidationPageProps {
+    category: ValidationCategory;
+}
+
+const ValidationPage: React.FC<ValidationPageProps> = ({ category }) => {
   const [fileIT, setFileIT] = useState<File | null>(null);
   const [fileMaster, setFileMaster] = useState<File | null>(null);
   const [isValidating, setIsValidating] = useState(false);
@@ -34,12 +38,19 @@ const ValidationPage: React.FC = () => {
     localStorage.setItem('validationHistory', JSON.stringify(history));
   }, [history]);
 
+  // Reset state when category changes
+  useEffect(() => {
+      setFileIT(null);
+      setFileMaster(null);
+      setResult(null);
+      setSelectedMismatch(null);
+      setShowFullReport(false);
+  }, [category]);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'IT' | 'MASTER') => {
     if (e.target.files && e.target.files[0]) {
       if (type === 'IT') setFileIT(e.target.files[0]);
       else setFileMaster(e.target.files[0]);
-      // Note: We don't reset result immediately to keep the view until new validation starts
-      // setResult(null); 
     }
   };
 
@@ -50,11 +61,11 @@ const ValidationPage: React.FC = () => {
     if (type === 'IT') {
         // Template based on Gambar 1 (Data IT)
         content = 'ORIGIN,DEST,SYS_CODE,SERVICE,TARIF,SLA_FORM,SLA_THRU\nMES10612,AMI10000,MES10612AMI10000,REG23,59000,3,5';
-        filename = 'Template_Data_IT.csv';
+        filename = `Template_Data_IT_${category}.csv`;
     } else {
         // Template based on Gambar 2 (Master Data) - UPDATED to match IT structure
         content = 'ORIGIN,DEST,SYS_CODE,Service REG,Tarif REG,sla form REG,sla thru REG\nDJJ10000,AMI10000,DJJ10000AMI10000,REG23,107000,4,5';
-        filename = 'Template_Master_Data.csv';
+        filename = `Template_Master_Data_${category}.csv`;
     }
 
     const blob = new Blob([content], { type: 'text/csv' });
@@ -100,7 +111,7 @@ const ValidationPage: React.FC = () => {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = reportFilter === 'ALL' ? 'Laporan_Validasi_Full.csv' : `Laporan_Validasi_${reportFilter}.csv`;
+    a.download = reportFilter === 'ALL' ? `Laporan_Validasi_${category}_Full.csv` : `Laporan_Validasi_${category}_${reportFilter}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -128,7 +139,7 @@ const ValidationPage: React.FC = () => {
         const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
         
         const data = lines.slice(1).map(line => {
-            // Handle simple comma split (Note: does not handle commas inside quotes for this demo)
+            // Handle simple comma split
             const values = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
             const row: any = {};
             headers.forEach((header, idx) => {
@@ -270,13 +281,14 @@ const ValidationPage: React.FC = () => {
 
         setResult(validationResult);
 
-        // Add to History
+        // Add to History with Category
         const historyItem: ValidationHistoryItem = {
             id: Date.now().toString(),
             timestamp: new Date().toLocaleString('id-ID'), // Format Indonesia
             fileNameIT: fileIT.name,
             fileNameMaster: fileMaster.name,
-            result: validationResult
+            result: validationResult,
+            category: category
         };
         setHistory(prev => [historyItem, ...prev]);
 
@@ -317,12 +329,20 @@ const ValidationPage: React.FC = () => {
 
   const displayedRows = getDisplayedRows();
 
+  // Filter history based on current category
+  // If item.category is undefined, assume it belongs to TARIF (legacy data) or show in both? 
+  // For strictness, let's show only matching categories.
+  const displayedHistory = history.filter(item => {
+      if (!item.category) return category === 'TARIF'; // Backward compatibility default
+      return item.category === category;
+  });
+
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-10">
       <div className="text-center space-y-2">
-        <h2 className="text-2xl font-bold text-slate-800">Validasi Data Otomatis</h2>
+        <h2 className="text-2xl font-bold text-slate-800">Validasi {category === 'TARIF' ? 'Tarif' : 'Biaya'} Otomatis</h2>
         <p className="text-slate-500 max-w-2xl mx-auto">
-            Upload <strong>Data IT</strong> dan <strong>Master Data</strong>. Sistem akan memvalidasi kolom:
+            Upload <strong>Data IT</strong> dan <strong>Master Data {category === 'TARIF' ? 'Tarif' : 'Biaya'}</strong>. Sistem akan memvalidasi kolom:
             <span className="font-mono text-accent bg-blue-50 px-1 rounded ml-1">Service</span>, 
             <span className="font-mono text-accent bg-blue-50 px-1 rounded ml-1">Tarif</span>, 
             <span className="font-mono text-accent bg-blue-50 px-1 rounded ml-1">sla_form</span>, dan 
@@ -412,7 +432,7 @@ const ValidationPage: React.FC = () => {
             ) : (
                 <>
                     <Upload size={20} />
-                    Mulai Validasi
+                    Mulai Validasi {category === 'TARIF' ? 'Tarif' : 'Biaya'}
                 </>
             )}
         </button>
@@ -422,7 +442,7 @@ const ValidationPage: React.FC = () => {
       {result && (
           <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-8">
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                  <h3 className="font-bold text-lg text-slate-800">Hasil Validasi</h3>
+                  <h3 className="font-bold text-lg text-slate-800">Hasil Validasi {category}</h3>
                   <div className="flex gap-2">
                     <button 
                         onClick={() => handleOpenReport('ALL')}
@@ -506,9 +526,9 @@ const ValidationPage: React.FC = () => {
         <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
             <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
                 <History size={20} className="text-slate-500" />
-                Riwayat Validasi
+                Riwayat Validasi {category}
             </h3>
-            {history.length > 0 && (
+            {displayedHistory.length > 0 && (
                 <button 
                     onClick={clearHistory}
                     className="text-red-500 hover:text-red-700 text-sm flex items-center gap-1"
@@ -529,7 +549,7 @@ const ValidationPage: React.FC = () => {
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                    {history.map((item) => (
+                    {displayedHistory.map((item) => (
                         <tr key={item.id} className="hover:bg-slate-50 transition">
                             <td className="px-6 py-3 text-slate-500">{item.timestamp}</td>
                             <td className="px-6 py-3 text-slate-800 font-medium">{item.fileNameIT}</td>
@@ -549,10 +569,10 @@ const ValidationPage: React.FC = () => {
                             </td>
                         </tr>
                     ))}
-                    {history.length === 0 && (
+                    {displayedHistory.length === 0 && (
                         <tr>
                             <td colSpan={5} className="px-6 py-8 text-center text-slate-400">
-                                Belum ada riwayat validasi.
+                                Belum ada riwayat validasi {category}.
                             </td>
                         </tr>
                     )}
@@ -569,7 +589,7 @@ const ValidationPage: React.FC = () => {
                     <div>
                         <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
                            <TableIcon size={20} className="text-accent" />
-                           Laporan Validasi: {reportFilter === 'ALL' ? 'Semua Data' : (reportFilter === 'MATCH' ? 'Data Sesuai' : 'Data Tidak Sesuai')}
+                           Laporan Validasi {category}: {reportFilter === 'ALL' ? 'Semua Data' : (reportFilter === 'MATCH' ? 'Data Sesuai' : 'Data Tidak Sesuai')}
                         </h3>
                         <p className="text-xs text-slate-500">Menampilkan {displayedRows.length} data</p>
                     </div>

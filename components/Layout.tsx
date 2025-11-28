@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { 
   LayoutDashboard, 
@@ -29,6 +30,7 @@ const Layout: React.FC<LayoutProps> = ({
 }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(true);
+  const [isValidationMenuOpen, setIsValidationMenuOpen] = useState(true);
 
   const navItemClass = (page: string) => 
     `flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
@@ -108,13 +110,35 @@ const Layout: React.FC<LayoutProps> = ({
             <span>Request Data</span>
           </div>
 
-          {/* Validasi */}
-          <div 
-            className={navItemClass('VALIDASI')}
-            onClick={() => onNavigate('VALIDASI')}
-          >
-            <CheckCircle size={20} />
-            <span>Validasi Data</span>
+          {/* Validasi Menu */}
+          <div>
+            <div 
+              className="flex items-center justify-between px-4 py-3 text-slate-300 hover:bg-slate-800 cursor-pointer"
+              onClick={() => setIsValidationMenuOpen(!isValidationMenuOpen)}
+            >
+              <div className="flex items-center gap-3">
+                <CheckCircle size={20} />
+                <span>Validasi Data</span>
+              </div>
+              {isValidationMenuOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </div>
+            
+            {isValidationMenuOpen && (
+              <div className="bg-slate-900/50 py-2">
+                <div 
+                  className={subNavItemClass('VALIDASI_TARIF')}
+                  onClick={() => onNavigate('VALIDASI_TARIF')}
+                >
+                  Tarif
+                </div>
+                <div 
+                  className={subNavItemClass('VALIDASI_BIAYA')}
+                  onClick={() => onNavigate('VALIDASI_BIAYA')}
+                >
+                  Biaya
+                </div>
+              </div>
+            )}
           </div>
         </nav>
 
@@ -136,7 +160,7 @@ const Layout: React.FC<LayoutProps> = ({
                 <Menu size={24} />
               </button>
             )}
-            <h2 className="text-lg font-semibold text-slate-800">{activePage}</h2>
+            <h2 className="text-lg font-semibold text-slate-800 capitalize">{activePage.replace(/_/g, ' ').toLowerCase()}</h2>
           </div>
 
           <div className="flex items-center gap-4">

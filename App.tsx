@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import Layout from './components/Layout';
 import WorkflowPage from './pages/WorkflowPage';
@@ -19,8 +20,10 @@ const App: React.FC = () => {
         return <WorkflowPage key={activePage} type={activePage as SubmissionType} currentUserRole={currentUserRole} />;
       case SubmissionType.DATA_REQUEST:
         return <WorkflowPage key={activePage} type={SubmissionType.DATA_REQUEST} currentUserRole={currentUserRole} />;
-      case 'VALIDASI':
-        return <ValidationPage />;
+      case 'VALIDASI_TARIF':
+        return <ValidationPage key="TARIF" category="TARIF" />;
+      case 'VALIDASI_BIAYA':
+        return <ValidationPage key="BIAYA" category="BIAYA" />;
       default:
         return <WorkflowPage type={SubmissionType.HARGA_JUAL} currentUserRole={currentUserRole} />;
     }

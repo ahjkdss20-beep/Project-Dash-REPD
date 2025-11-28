@@ -76,10 +76,13 @@ export interface ValidationResult {
     fullReport: FullValidationRow[]; // New field for the Excel-like view
 }
 
+export type ValidationCategory = 'TARIF' | 'BIAYA';
+
 export interface ValidationHistoryItem {
     id: string;
     timestamp: string;
     fileNameIT: string;
     fileNameMaster: string;
     result: ValidationResult;
+    category?: ValidationCategory; // Optional for backward compatibility
 }
